@@ -1,0 +1,41 @@
+/*********************************************************************
+*                 (c) SEGGER Microcontroller GmbH                    *
+*                      The Embedded Experts                          *
+*                         www.segger.com                             *
+**********************************************************************
+
+File          : D:/STM32_Projects/duoji/duoji.jdebug
+Purpose       : 二轴云台 (STM32F103C8 + MPU6050 + 双舵机) Ozone 工程
+*/
+
+/*********************************************************************
+*
+*       OnProjectLoad
+*
+* Function description
+*   Project load routine. Required.
+*
+**********************************************************************
+*/
+void OnProjectLoad (void) {
+  //
+  // 工程路径替换: 换了电脑/目录时只改这一行
+  //
+  Project.AddPathSubstitute ("D:/STM32_Projects/duoji", "$(ProjectDir)");
+  //
+  // 目标芯片与调试接口
+  //
+  Project.SetDevice ("STM32F103C8");
+  Project.SetHostIF ("USB", "602711421");
+  Project.SetTargetIF ("SWD");
+  Project.SetTIFSpeed ("4 MHz");
+  //
+  // 外设寄存器视图
+  //
+  Project.AddSvdFile ("$(InstallDir)/Config/CPU/Cortex-M3.svd");
+  Project.AddSvdFile ("$(InstallDir)/Config/Peripherals/STM32F103xx.svd");
+  //
+  // 要下载/调试的固件 (cmake 编译产物)
+  //
+  File.Open ("$(ProjectDir)/build/Debug/duoji.elf");
+}

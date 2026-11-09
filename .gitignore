@@ -1,0 +1,38 @@
+# ---- 编译产物 ----
+build/
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.su
+*.lst
+compile_commands.json
+
+# ---- 编辑器 / IDE ----
+.vscode/
+.settings/
+.cache/
+.clangd
+*.jdebug.user
+*.uvguix.*
+*.uvoptx
+Objects/
+Listings/
+
+# ---- 系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- 大文件（视频走外链或 LFS）----
+*.mp4
+*.avi
+*.mov

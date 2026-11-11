@@ -50,6 +50,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/hardware/inv_mpu.c
     Core/hardware/inv_mpu_dmp_motion_driver.c
     Core/hardware/pid.c
+    # 通用组件: CRC16 / 通信帧
+    common/crc16.c
+    common/frame.c
 )
 
 # Add include paths
@@ -57,6 +60,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     Core/Inc
     Core/hardware
+    common
 )
 
 # Add project symbols (macros)

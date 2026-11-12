@@ -1,0 +1,6 @@
+﻿5 ����: ��Ч֡ 50 ��, У��ʧ�� 0 ��
+  pitch= -77.51 roll=-112.60 yaw=  78.44 seq=307
+  pitch= -77.51 roll=-112.61 yaw=  78.45 seq=308
+  pitch= -77.52 roll=-112.60 yaw=  78.45 seq=309
+  pitch= -77.51 roll=-112.62 yaw=  78.46 seq=310
+  pitch= -77.51 roll=-112.63 yaw=  78.46 seq=311

@@ -1,4 +1,4 @@
-# ---- 编译产物 ----
+# build output
 build/
 *.o
 *.d
@@ -10,7 +10,7 @@ build/
 *.lst
 compile_commands.json
 
-# ---- 编辑器 / IDE ----
+# editor / IDE
 .vscode/
 .settings/
 .cache/
@@ -20,19 +20,20 @@ compile_commands.json
 *.uvoptx
 Objects/
 Listings/
+*.store.json
 
-# ---- 系统 ----
+# OS
 Thumbs.db
 desktop.ini
 .DS_Store
 
-# ---- Python ----
+# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
 
-# ---- 大文件（视频走外链或 LFS）----
+# large media (keep videos out of git or use LFS)
 *.mp4
 *.avi
 *.mov

@@ -35,6 +35,9 @@
 #include "mpu6050.h"   /* MPU6050 寄存器读写 (已改成 HAL 硬件 I2C 版本) */
 #include "inv_mpu.h"   /* mpu_dmp_init() / mpu_dmp_get_data() 姿态解算 */
 #include "pid.h"       /* 二轴云台的 PID 控制器 */
+#include "uart_stm32.h"/* BSP: 调试串口 USART1 (PA9/PA10) */
+#include "frame.h"     /* 通信帧打包 */
+#include <string.h>
 
 /* 教程笔记里写的是 MPU_DMP_INIT / TU6050_GetData,
  * 驱动库实际导出的函数名是 mpu_dmp_init / mpu_dmp_get_data,
@@ -180,6 +183,32 @@ static void Gimbal_Init(void)
 }
 
 /**
+  * @brief  把当前姿态打包成帧, 通过 USART1 发给上位机
+  * @note   角度单位 0.01 度, 一帧 14 字节
+  */
+static void Telemetry_Send(void)
+{
+    static uint16_t seq = 0;
+    uint8_t payload[8];
+    uint8_t buf[FRAME_MAX_SIZE];
+    uint16_t n;
+    int16_t p = (int16_t)(pitch * 100.0f);
+    int16_t r = (int16_t)(roll  * 100.0f);
+    int16_t y = (int16_t)(yaw   * 100.0f);
+
+    memcpy(&payload[0], &p, 2);
+    memcpy(&payload[2], &r, 2);
+    memcpy(&payload[4], &y, 2);
+    memcpy(&payload[6], &seq, 2);
+    seq++;
+
+    n = frame_pack(CMD_ATTITUDE, payload, 8, buf, sizeof(buf));
+    if (n > 0) {
+        bsp_uart1_send(buf, n, 5);
+    }
+}
+
+/**
   * @brief  云台控制: 读姿态 -> PID 计算 -> 输出 PWM, 每 10ms 调用一次
   */
 static void Gimbal_Update(void)
@@ -200,6 +229,15 @@ static void Gimbal_Update(void)
                    (int16_t)(SERVO_MID_US + PITCH_SERVO_SIGN * pitch_out));
     Servo_SetPulse(TIM_CHANNEL_2,
                    (int16_t)(SERVO_MID_US + YAW_SERVO_SIGN * yaw_out));
+
+    /* 每 10 个控制周期(100ms) 发一帧姿态给上位机 */
+    {
+        static uint8_t div = 0;
+        if (++div >= 10) {
+            div = 0;
+            Telemetry_Send();
+        }
+    }
 }
 
 /* USER CODE END 0 */
@@ -236,6 +274,7 @@ int main(void)
   MX_TIM3_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  bsp_uart1_init(115200);        /* 调试串口: PA9=TX, PA10=RX */
   Gimbal_Init();                 /* 舵机 + MPU6050 DMP 初始化 */
   last_tick = HAL_GetTick();     /* 控制周期计时起点 */
   /* USER CODE END 2 */

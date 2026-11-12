@@ -53,6 +53,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # 通用组件: CRC16 / 通信帧
     common/crc16.c
     common/frame.c
+    # BSP 层: 板级外设封装
+    bsp/uart_stm32.c
 )
 
 # Add include paths
@@ -61,6 +63,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Inc
     Core/hardware
     common
+    bsp
 )
 
 # Add project symbols (macros)

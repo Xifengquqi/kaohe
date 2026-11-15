@@ -38,7 +38,12 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+/* 三个角度打包成一个结构体, 任务间传递用 */
+typedef struct {
+    float pitch;
+    float roll;
+    float yaw;
+} Attitude_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -87,6 +92,11 @@ float pitch = 0.0f;   /* 俯仰角: -90 ~ +90   */
 float roll  = 0.0f;   /* 横滚角: -180 ~ +180 */
 float yaw   = 0.0f;   /* 航向角: -180 ~ +180 */
 
+/* 传感器任务写、控制任务读的"最新姿态"
+ * 姿态是状态量(只需要最新值), 不是事件, 所以不用队列,
+ * 一个 volatile 结构体就够; Cortex-M3 上 32 位对齐读写是原子的 */
+volatile Attitude_t g_attitude = { 0.0f, 0.0f, 0.0f };
+
 /* 两轴 PID 控制器 */
 PID_t pid_pitch;
 PID_t pid_yaw;
@@ -116,6 +126,8 @@ void StartDefaultTask(void const * argument);
 static void Gimbal_Init(void);
 static void Gimbal_Update(void);
 static void Servo_SetPulse(uint32_t channel, int16_t pulse_us);
+static void StartSensorTask(void const *argument);
+static void StartCommTask(void const *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -205,6 +217,43 @@ static void Telemetry_Send(void)
 }
 
 /**
+  * @brief  传感器任务: 每 5ms 取一次 DMP 姿态, 写进 g_attitude
+  * @note   DMP 是 100Hz 输出, 5ms 轮询会有一半次数读不到新数据(返回 1),
+  *         这是正常的, 跳过即可
+  */
+static void StartSensorTask(void const *argument)
+{
+    float p, r, y;
+
+    (void)argument;
+
+    for (;;)
+    {
+        if (mpu_ready && MPU6050_GetData(&p, &r, &y) == 0)
+        {
+            g_attitude.pitch = p;
+            g_attitude.roll  = r;
+            g_attitude.yaw   = y;
+        }
+        osDelay(5);
+    }
+}
+
+/**
+  * @brief  通信任务: 目前只是占位, 后续在这里解析上位机/蓝牙指令
+  */
+static void StartCommTask(void const *argument)
+{
+    (void)argument;
+
+    for (;;)
+    {
+        /* TODO: 串口接收 + 帧解析 + 改目标角 */
+        osDelay(20);
+    }
+}
+
+/**
   * @brief  云台控制: 读姿态 -> PID 计算 -> 输出 PWM, 每 10ms 调用一次
   */
 static void Gimbal_Update(void)
@@ -213,8 +262,10 @@ static void Gimbal_Update(void)
 
     if (!mpu_ready) return;
 
-    /* 读取 DMP 解算好的姿态角(单位: 度), 返回 0 表示读到有效数据 */
-    if (MPU6050_GetData(&pitch, &roll, &yaw) != 0) return;
+    /* 姿态由 SensorTask 更新, 这里只取最新值, 不再占用 I2C 时间 */
+    pitch = g_attitude.pitch;
+    roll  = g_attitude.roll;
+    yaw   = g_attitude.yaw;
 
     /* 目标角度 - 当前角度 = 偏差, PID 算出需要补偿的脉宽 */
     pitch_out = PID_Compute(&pid_pitch, pitch, CONTROL_DT);
@@ -293,11 +344,23 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 768);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* 传感器任务: 优先级高于控制任务, 保证 5ms 采样不被拖慢 */
+  osThreadDef(sensorTask, StartSensorTask, osPriorityAboveNormal, 0, 256);
+  if(osThreadCreate(osThread(sensorTask), NULL)==NULL);
+  {
+    Error_Handler();
+  }
+
+  /* 通信任务: 优先级最低, 丢一帧不影响云台稳定 */
+  osThreadDef(commTask, StartCommTask, osPriorityBelowNormal, 0, 256);
+  if(osThreadCreate(osThread(commTask), NULL)==NULL);
+  {
+    Error_Handler();
+  }
   /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
@@ -526,7 +589,7 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
-  /* 云台控制任务: 100Hz 读取姿态 + PID + 输出舵机 */
+  /* 控制任务: 100Hz 算 PID + 输出舵机 */
   uint32_t last = HAL_GetTick();
 
   Gimbal_Init();

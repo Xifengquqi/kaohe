@@ -9,9 +9,10 @@ extern "C" {
 
 /*
  * USART1: PA9 = TX, PA10 = RX
- * 只做最小封装, 给调试输出 / 上位机通信用
+ *
+ * 初始化交给 CubeMX 生成的 MX_USART1_UART_Init(), 这里只负责"发数据"。
+ * 这样只有一处配置, 不会出现两套句柄打架。
  */
-void bsp_uart1_init(uint32_t baud);
 
 /* 返回 0 成功, -1 失败(HAL 超时或忙) */
 int bsp_uart1_send(const uint8_t *data, uint16_t len, uint32_t timeout_ms);

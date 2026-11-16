@@ -105,6 +105,11 @@ PID_t pid_yaw;
 uint16_t servo_pitch_us = SERVO_MID_US;
 uint16_t servo_yaw_us   = SERVO_MID_US;
 
+/* BSP 层的串口对象 + 上层使用的接口指针
+ * 上层只认 iuart_t*, 看不到 UART_HandleTypeDef */
+static uart_stm32_t s_dbg_uart;
+static iuart_t     *s_dbg_uart_if = NULL;
+
 static uint32_t last_tick = 0;   /* 上一次控制的时间戳 */
 
 /* 调试用: MPU6050 初始化结果, 加到 Ozone 的 Watch 窗口里能直接看出来
@@ -212,7 +217,7 @@ static void Telemetry_Send(void)
 
     n = frame_pack(CMD_ATTITUDE, payload, 8, buf, sizeof(buf));
     if (n > 0) {
-        bsp_uart1_send(buf, n, 5);
+        iuart_send(s_dbg_uart_if, buf, n, 5);   /* 只通过接口发, 不碰 HAL */
     }
 }
 
@@ -324,6 +329,10 @@ int main(void)
   /* USER CODE BEGIN 2 */
   /* 串口/外设初始化由 CubeMX 生成的 MX_xxx_Init() 完成;
      云台的初始化搬到 StartDefaultTask 里, 否则会在调度器启动前卡住两秒 */
+
+  /* 把 CubeMX 的 huart1 包成 iuart 接口, 上层只通过接口用串口 */
+  uart_stm32_init(&s_dbg_uart, &huart1);
+  s_dbg_uart_if = uart_stm32_as_iuart(&s_dbg_uart);
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -349,15 +358,15 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* 传感器任务: 优先级高于控制任务, 保证 5ms 采样不被拖慢 */
-  osThreadDef(sensorTask, StartSensorTask, osPriorityAboveNormal, 0, 256);
-  if(osThreadCreate(osThread(sensorTask), NULL)==NULL);
+  osThreadDef(sensorTask, StartSensorTask, osPriorityAboveNormal, 0, 512);
+  if (osThreadCreate(osThread(sensorTask), NULL) == NULL)
   {
     Error_Handler();
   }
 
   /* 通信任务: 优先级最低, 丢一帧不影响云台稳定 */
   osThreadDef(commTask, StartCommTask, osPriorityBelowNormal, 0, 256);
-  if(osThreadCreate(osThread(commTask), NULL)==NULL);
+  if (osThreadCreate(osThread(commTask), NULL) == NULL)
   {
     Error_Handler();
   }

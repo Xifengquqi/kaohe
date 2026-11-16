@@ -63,6 +63,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Inc
     Core/hardware
     common
+    interface
     bsp
 )
 

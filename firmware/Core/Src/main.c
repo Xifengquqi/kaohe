@@ -60,7 +60,7 @@ typedef struct {
 
 /* PID 输出限幅(单位 us): 限制每次最多摆动多少, 防止堵转、过冲。
  * 400us 大约对应 36 度, 想更"猛"可以加大, 想更"稳"可以减小 */
-#define PID_OUT_LIMIT       400.0f
+#define PID_OUT_LIMIT       300.0f
 
 /* 安装方向修正: 云台往一边"跑飞"或越补越歪时,
  * 把对应轴的 +1 改成 -1 (只改符号, 不用动别的) */
@@ -191,6 +191,26 @@ static void Gimbal_Init(void)
     /* 3. PID 参数: 先只调 Kp(云台抖就减小, 回中慢就适当加 Ki) */
     PID_Init(&pid_pitch, 8.0f, 0.3f, 0.0f, -PID_OUT_LIMIT, PID_OUT_LIMIT);
     PID_Init(&pid_yaw,   8.0f, 0.3f, 0.0f, -PID_OUT_LIMIT, PID_OUT_LIMIT);
+        /* 上电自校准: 静止采 20 次, 取平均作为"水平"基准 */
+    {
+        float sp = 0.0f, sr = 0.0f, sy = 0.0f;
+        int   i, n = 0;
+
+        for (i = 0; i < 20; i++)
+        {
+            float p, r, y;
+            if (MPU6050_GetData(&p, &r, &y) == 0)
+            {
+                sp += p; sr += r; sy += y; n++;
+            }
+            HAL_Delay(10);          /* 20 次 × 10ms = 200ms */
+        }
+        if (n > 0)
+        {
+            PID_SetTarget(&pid_pitch, sp / n);
+            PID_SetTarget(&pid_yaw,   sy / n);
+        }
+    }
     PID_SetTarget(&pid_pitch, TARGET_PITCH);
     PID_SetTarget(&pid_yaw,   TARGET_YAW);
 }

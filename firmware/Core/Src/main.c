@@ -60,7 +60,7 @@ typedef struct {
 
 /* PID 输出限幅(单位 us): 限制每次最多摆动多少, 防止堵转、过冲。
  * 400us 大约对应 36 度, 想更"猛"可以加大, 想更"稳"可以减小 */
-#define PID_OUT_LIMIT       300.0f
+#define PID_OUT_LIMIT       250.0f
 
 /* 安装方向修正: 云台往一边"跑飞"或越补越歪时,
  * 把对应轴的 +1 改成 -1 (只改符号, 不用动别的) */
@@ -189,8 +189,8 @@ static void Gimbal_Init(void)
     if (!mpu_ready) return;
 
     /* 3. PID 参数: 先只调 Kp(云台抖就减小, 回中慢就适当加 Ki) */
-    PID_Init(&pid_pitch, 8.0f, 0.3f, 0.0f, -PID_OUT_LIMIT, PID_OUT_LIMIT);
-    PID_Init(&pid_yaw,   8.0f, 0.3f, 0.0f, -PID_OUT_LIMIT, PID_OUT_LIMIT);
+    PID_Init(&pid_pitch, 4.0f, 0.3f, 0.0f, -PID_OUT_LIMIT, PID_OUT_LIMIT);
+    PID_Init(&pid_yaw,   4.0f, 0.3f, 0.0f, -PID_OUT_LIMIT, PID_OUT_LIMIT);
         /* 上电自校准: 静止采 20 次, 取平均作为"水平"基准 */
     {
         float sp = 0.0f, sr = 0.0f, sy = 0.0f;
@@ -210,9 +210,13 @@ static void Gimbal_Init(void)
             PID_SetTarget(&pid_pitch, sp / n);
             PID_SetTarget(&pid_yaw,   sy / n);
         }
+        else
+        {
+            PID_SetTarget(&pid_pitch, TARGET_PITCH);
+            PID_SetTarget(&pid_yaw,   TARGET_YAW);
+        }
     }
-    PID_SetTarget(&pid_pitch, TARGET_PITCH);
-    PID_SetTarget(&pid_yaw,   TARGET_YAW);
+    
 }
 
 /**
@@ -264,17 +268,103 @@ static void StartSensorTask(void const *argument)
     }
 }
 
+/* ---------------- 通信: 指令处理 ---------------- */
+
 /**
-  * @brief  通信任务: 目前只是占位, 后续在这里解析上位机/蓝牙指令
+  * @brief  回一个 ACK 帧: [被回应的命令, 0=失败 1=成功]
+  */
+static void Comm_SendAck(uint8_t cmd, uint8_t ok)
+{
+    uint8_t  payload[2];
+    uint8_t  buf[FRAME_MAX_SIZE];
+    uint16_t n;
+
+    payload[0] = cmd;
+    payload[1] = ok;
+
+    n = frame_pack(CMD_ACK, payload, 2, buf, sizeof(buf));
+    if (n > 0) {
+        iuart_send(s_dbg_uart_if, buf, n, 5);
+    }
+}
+
+/**
+  * @brief  处理一条来自上位机/蓝牙的指令
+  * @note   指令格式见 docs/02-通信协议.md
+  */
+static void Comm_HandleFrame(const Frame *f)
+{
+    switch (f->cmd)
+    {
+    case CMD_SET_TARGET:            /* 目标角: int16 pitch, int16 yaw (0.01 度) */
+        if (f->len >= 4)
+        {
+            int16_t p, y;
+            memcpy(&p, &f->data[0], 2);
+            memcpy(&y, &f->data[2], 2);
+
+            PID_SetTarget(&pid_pitch, (float)p / 100.0f);
+            PID_SetTarget(&pid_yaw,   (float)y / 100.0f);
+            Comm_SendAck(CMD_SET_TARGET, 1);
+        }
+        else
+        {
+            Comm_SendAck(CMD_SET_TARGET, 0);
+        }
+        break;
+
+    case CMD_SET_PID:               /* PID 参数: kp, ki, kd (都是 100 倍整数) */
+        if (f->len >= 6)
+        {
+            int16_t kp, ki, kd;
+            memcpy(&kp, &f->data[0], 2);
+            memcpy(&ki, &f->data[2], 2);
+            memcpy(&kd, &f->data[4], 2);
+
+            pid_pitch.Kp = pid_yaw.Kp = (float)kp / 100.0f;
+            pid_pitch.Ki = pid_yaw.Ki = (float)ki / 100.0f;
+            pid_pitch.Kd = pid_yaw.Kd = (float)kd / 100.0f;
+            PID_Reset(&pid_pitch);      /* 换参数后清掉旧的积分, 避免冲击 */
+            PID_Reset(&pid_yaw);
+
+            Comm_SendAck(CMD_SET_PID, 1);
+        }
+        else
+        {
+            Comm_SendAck(CMD_SET_PID, 0);
+        }
+        break;
+
+    default:
+        Comm_SendAck(f->cmd, 0);    /* 不认识的命令, 回失败 */
+        break;
+    }
+}
+
+/**
+  * @brief  通信任务: 收字节 -> 喂状态机 -> 收到整帧就执行
   */
 static void StartCommTask(void const *argument)
 {
+    FrameParser parser;
+    Frame       frame;
+    uint8_t     byte;
+
     (void)argument;
+
+    frame_parser_init(&parser);
 
     for (;;)
     {
-        /* TODO: 串口接收 + 帧解析 + 改目标角 */
-        osDelay(20);
+        /* 阻塞等 1 个字节, 最长 20ms; 超时就继续等 */
+        if (iuart_recv(s_dbg_uart_if, &byte, 1, 20) != 0) {
+            continue;
+        }
+
+        /* 状态机: 1 = 收到完整且 CRC 正确的帧 */
+        if (frame_parser_feed(&parser, byte, &frame) == 1) {
+            Comm_HandleFrame(&frame);
+        }
     }
 }
 

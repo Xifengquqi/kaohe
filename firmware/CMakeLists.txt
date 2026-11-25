@@ -49,7 +49,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/hardware/mpu6050.c
     Core/hardware/inv_mpu.c
     Core/hardware/inv_mpu_dmp_motion_driver.c
-    Core/hardware/pid.c
+    model/pid.c
     # 通用组件: CRC16 / 通信帧
     common/crc16.c
     common/frame.c
@@ -65,6 +65,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     common
     interface
     bsp
+    model
 )
 
 # Add project symbols (macros)

@@ -25,6 +25,7 @@
 #include "mpu6050.h"   /* MPU6050 寄存器读写 (已改成 HAL 硬件 I2C 版本) */
 #include "inv_mpu.h"   /* mpu_dmp_init() / mpu_dmp_get_data() 姿态解算 */
 #include "pid.h"       /* 二轴云台的 PID 控制器 */
+#include "stm32f1xx_hal.h"
 #include "uart_stm32.h"/* BSP: 调试串口 USART1 (PA9/PA10) */
 #include "frame.h"     /* 通信帧打包 */
 #include <string.h>
@@ -96,6 +97,12 @@ float yaw   = 0.0f;   /* 航向角: -180 ~ +180 */
  * 姿态是状态量(只需要最新值), 不是事件, 所以不用队列,
  * 一个 volatile 结构体就够; Cortex-M3 上 32 位对齐读写是原子的 */
 volatile Attitude_t g_attitude = { 0.0f, 0.0f, 0.0f };
+/* 最后一次成功读到姿态的时刻(ms), 用于检测传感器掉线 */
+static volatile uint32_t g_imu_tick = 0;
+
+/* 云台使能: 1 = 正常工作, 0 = 失能(急停/失联)
+ * 由通信任务通过 CMD_ENABLE 修改; 为 0 时控制任务停止输出, 舵机保持不动 */
+static volatile uint8_t g_enable = 1;
 
 /* 两轴 PID 控制器 */
 PID_t pid_pitch;
@@ -263,6 +270,7 @@ static void StartSensorTask(void const *argument)
             g_attitude.pitch = p;
             g_attitude.roll  = r;
             g_attitude.yaw   = y;
+            g_imu_tick=HAL_GetTick();
         }
         osDelay(5);
     }
@@ -335,6 +343,24 @@ static void Comm_HandleFrame(const Frame *f)
         }
         break;
 
+    case CMD_ENABLE:                /* 使能: 1 字节, 1=工作 0=停止 */
+        if (f->len >= 1)
+        {
+            g_enable = (f->data[0] != 0) ? 1 : 0;
+
+            if (!g_enable)
+            {
+                PID_Reset(&pid_pitch);  /* 停之前清积分, 重新使能不会猛冲 */
+                PID_Reset(&pid_yaw);
+            }
+            Comm_SendAck(CMD_ENABLE, 1);
+        }
+        else
+        {
+            Comm_SendAck(CMD_ENABLE, 0);
+        }
+        break;
+
     default:
         Comm_SendAck(f->cmd, 0);    /* 不认识的命令, 回失败 */
         break;
@@ -376,6 +402,13 @@ static void Gimbal_Update(void)
     float pitch_out, yaw_out;
 
     if (!mpu_ready) return;
+    if (!g_enable)  return;
+
+    /* 超过 100ms 没新数据 = 传感器掉线/卡死, 停止输出, 防止拿着旧数据堵转 */
+    if (HAL_GetTick() - g_imu_tick > 100)
+    {
+        return;
+    }
 
     /* 姿态由 SensorTask 更新, 这里只取最新值, 不再占用 I2C 时间 */
     pitch = g_attitude.pitch;

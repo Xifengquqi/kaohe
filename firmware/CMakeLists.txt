@@ -55,6 +55,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     common/frame.c
     # BSP 层: 板级外设封装
     bsp/uart_stm32.c
+    bsp/pwm_stm32.c
+    # Device 层: 器件抽象(舵机等)
+    device/servo.c
 )
 
 # Add include paths
@@ -66,6 +69,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     interface
     bsp
     model
+    device
 )
 
 # Add project symbols (macros)

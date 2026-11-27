@@ -27,6 +27,8 @@
 #include "pid.h"       /* 二轴云台的 PID 控制器 */
 #include "stm32f1xx_hal.h"
 #include "uart_stm32.h"/* BSP: 调试串口 USART1 (PA9/PA10) */
+#include "pwm_stm32.h" /* BSP: 定时器 PWM, 实现 ipwm 接口 */
+#include "servo.h"     /* Device: 舵机(角度→脉宽) */
 #include "frame.h"     /* 通信帧打包 */
 #include <string.h>
 
@@ -54,6 +56,7 @@ typedef struct {
 #define SERVO_MIN_US        500U
 #define SERVO_MID_US        1500U
 #define SERVO_MAX_US        2500U
+#define SERVO_HALF_US       500U    /* 中位到一端: 角度 ±90° 对应 ±500us */
 
 /* 控制周期: 10ms = 100Hz, 和 DMP 输出速率(DEFAULT_MPU_HZ=100)一致 */
 #define CONTROL_PERIOD_MS   10U
@@ -112,6 +115,13 @@ PID_t pid_yaw;
 uint16_t servo_pitch_us = SERVO_MID_US;
 uint16_t servo_yaw_us   = SERVO_MID_US;
 
+/* PWM 的 BSP 对象 + 舵机的 Device 对象
+ * 装配关系: main.c(App) -> servo(Device) -> ipwm(Interface) <- pwm_stm32(BSP) */
+static pwm_stm32_t s_pwm_pitch;
+static pwm_stm32_t s_pwm_yaw;
+static servo_t     s_servo_pitch;
+static servo_t     s_servo_yaw;
+
 /* BSP 层的串口对象 + 上层使用的接口指针
  * 上层只认 iuart_t*, 看不到 UART_HandleTypeDef */
 static uart_stm32_t s_dbg_uart;
@@ -146,21 +156,20 @@ static void StartCommTask(void const *argument);
 /* USER CODE BEGIN 0 */
 
 /**
-  * @brief  设置某一路舵机的脉宽, 自动限幅到 500~2500us
+  * @brief  设置某一路舵机的脉宽
+  * @note   业务层不再直接操作定时器, 转给 device 层的 servo_t
   * @param  channel  : TIM_CHANNEL_1(俯仰) / TIM_CHANNEL_2(航向)
   * @param  pulse_us : 期望脉宽, 单位 us
   */
 static void Servo_SetPulse(uint32_t channel, int16_t pulse_us)
 {
-    if (pulse_us < (int16_t)SERVO_MIN_US) pulse_us = (int16_t)SERVO_MIN_US;
-    if (pulse_us > (int16_t)SERVO_MAX_US) pulse_us = (int16_t)SERVO_MAX_US;
-
-    __HAL_TIM_SET_COMPARE(&htim3, channel, (uint16_t)pulse_us);
-
-    if (channel == TIM_CHANNEL_1)
+    if (channel == TIM_CHANNEL_1) {
+        servo_set_pulse(&s_servo_pitch, pulse_us);
         servo_pitch_us = (uint16_t)pulse_us;
-    else
+    } else {
+        servo_set_pulse(&s_servo_yaw, pulse_us);
         servo_yaw_us = (uint16_t)pulse_us;
+    }
 }
 
 /**
@@ -172,11 +181,22 @@ static void Gimbal_Init(void)
     uint8_t ret;
     uint8_t retry = 0;
 
-    /* 1. 先把两路 PWM 写中位再启动, 上电时舵机不会突然抖一下 */
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, SERVO_MID_US);
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, SERVO_MID_US);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+    /* 1. 先把两路 PWM 写中位再启动, 上电时舵机不会突然抖一下
+     *    具体实现下沉到 BSP(pwm_stm32) 和 Device(servo), 这里只做组装 */
+    pwm_stm32_init(&s_pwm_pitch, &htim3, TIM_CHANNEL_1, SERVO_MIN_US, SERVO_MAX_US);
+    pwm_stm32_init(&s_pwm_yaw,   &htim3, TIM_CHANNEL_2, SERVO_MIN_US, SERVO_MAX_US);
+
+    servo_init(&s_servo_pitch, pwm_stm32_as_ipwm(&s_pwm_pitch),
+               PITCH_SERVO_SIGN, SERVO_MID_US, SERVO_HALF_US);
+    servo_init(&s_servo_yaw,   pwm_stm32_as_ipwm(&s_pwm_yaw),
+               YAW_SERVO_SIGN,   SERVO_MID_US, SERVO_HALF_US);
+
+    servo_center(&s_servo_pitch);
+    servo_center(&s_servo_yaw);
+
+    ipwm_start(s_servo_pitch.pwm);
+    ipwm_start(s_servo_yaw.pwm);
+
     servo_pitch_us = SERVO_MID_US;
     servo_yaw_us   = SERVO_MID_US;
 
